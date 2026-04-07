@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       pkg_url:
-        description: 'رابط GitHub للباكدج - اتركه فاضي لو الباكدج موجود بالفعل'
+        description: 'Add Package url'
         required: false
         default: ''
       pkg_name:
-        description: 'اسم فولدر الباكدج (مثلاً: htop)'
+        description: 'package name'
         required: true
         default: ''
 
