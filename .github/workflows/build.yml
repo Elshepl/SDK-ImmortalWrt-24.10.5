@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -55,24 +57,20 @@ jobs:
           PKG_URL="${{ github.event.inputs.pkg_url }}"
           PKG_NAME="${{ github.event.inputs.pkg_name }}"
 
+          mkdir -p packages-src
+
           if [ -n "$PKG_URL" ]; then
-            echo ">>> Mode: Clone from URL"
-            echo "    URL:  $PKG_URL"
-            echo "    Dest: sdk/package/$PKG_NAME"
-            cd sdk/package
-            git clone "$PKG_URL" "$PKG_NAME"
+            echo ">>> Mode: Clone new external package"
+            git clone "$PKG_URL" "packages-src/$PKG_NAME"
+            rm -rf "packages-src/$PKG_NAME/.git"
+            cp -r "packages-src/$PKG_NAME" "sdk/package/"
           else
-            echo ">>> Mode: Use existing package"
-            echo "    Looking for: sdk/package/$PKG_NAME"
-            if [ ! -d "sdk/package/$PKG_NAME" ]; then
-              echo ""
-              echo "ERROR: Package '$PKG_NAME' not found in sdk/package/"
-              echo ""
-              echo "Available packages:"
-              ls sdk/package/
-              exit 1
+            if [ -d "packages-src/$PKG_NAME" ]; then
+              echo ">>> Mode: Use modified package from packages-src"
+              cp -r "packages-src/$PKG_NAME" "sdk/package/"
+            else
+              echo ">>> Mode: Use official feed package"
             fi
-            echo "    Found: sdk/package/$PKG_NAME"
           fi
 
       - name: Compile Package
@@ -81,22 +79,25 @@ jobs:
           make defconfig
           make package/${{ github.event.inputs.pkg_name }}/compile -j$(nproc) V=s
 
-      - name: Push Built Packages to Repository
+      - name: Push Built Packages and Source to Repository
         run: |
           PKG_NAME="${{ github.event.inputs.pkg_name }}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # سحب آخر تغييرات الـ main قبل ما نضيف
           git pull --rebase origin main
 
-          # نسخ محتويات bin إلى مجلد files في الريبو (مش بيمسح القديم)
           mkdir -p files
           cp -r sdk/bin/. files/
 
-          # commit + push
           git add files/
-          git diff --cached --quiet && echo "Nothing new to commit" && exit 0
-          git commit -m "build($PKG_NAME): $(date '+%Y-%m-%d %H:%M UTC')"
+          git add packages-src/
+
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit"
+            exit 0
+          fi
+
+          git commit -m "build($PKG_NAME): auto update bin and source $(date '+%Y-%m-%d %H:%M UTC')"
           git push origin main
