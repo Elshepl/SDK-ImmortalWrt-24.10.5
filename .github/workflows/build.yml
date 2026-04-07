@@ -60,43 +60,42 @@ jobs:
       - name: Prepare Package and Find Actual Name
         run: |
           PKG_URL="${{ github.event.inputs.pkg_url }}"
-          # بناخد الاسم فقط في حالة لو المستخدم كتب مسار غلط
-          PKG_NAME=$(basename "${{ github.event.inputs.pkg_name }}")
-
+          # تنظيف الاسم من أي مسارات أو رموز غريبة
+          CLEAN_NAME=$(basename "${{ github.event.inputs.pkg_name }}")
+          
           mkdir -p packages-src
 
           if [ -n "$PKG_URL" ]; then
             echo ">>> Mode: Clone new external package"
-            # بنمسح أي فولدر قديم بنفس الاسم عشان م يحصلش تداخل
-            rm -rf "packages-src/$PKG_NAME"
-            git clone "$PKG_URL" "packages-src/$PKG_NAME"
-            # تنظيف مخلفات الجيت والوورك-فلووز
-            rm -rf "packages-src/$PKG_NAME/.git"
-            rm -rf "packages-src/$PKG_NAME/.github"
-            cp -r "packages-src/$PKG_NAME" "sdk/package/"
+            # حذف أي نسخة قديمة عشان نحدثها بالجديدة
+            rm -rf "packages-src/$CLEAN_NAME"
+            git clone --depth 1 "$PKG_URL" "packages-src/$CLEAN_NAME"
+            
+            # تنظيف ملفات الجيت والوورك-فلووز عشان ميعملوش مشاكل في الريبو بتاعك
+            find "packages-src/$CLEAN_NAME" -name ".git" -exec rm -rf {} +
+            find "packages-src/$CLEAN_NAME" -name ".github" -exec rm -rf {} +
+            find "packages-src/$CLEAN_NAME" -name ".gitignore" -exec rm -rf {} +
+            
+            cp -r "packages-src/$CLEAN_NAME" "sdk/package/"
           else
-            if [ -d "packages-src/$PKG_NAME" ]; then
+            if [ -d "packages-src/$CLEAN_NAME" ]; then
               echo ">>> Mode: Use modified package from packages-src"
-              cp -r "packages-src/$PKG_NAME" "sdk/package/"
+              cp -r "packages-src/$CLEAN_NAME" "sdk/package/"
             else
               echo ">>> Mode: Use official feed package"
             fi
           fi
 
           echo ">>> Searching for actual package folder or symlink..."
-          FOUND=$(find sdk/package -maxdepth 5 -name "*${PKG_NAME}*" ! -path "*/.git/*" | head -20)
-          COUNT=$(echo "$FOUND" | grep -c . || true)
-
-          if [ "$COUNT" -eq 1 ]; then
-            FULL_NAME=$(basename "$FOUND")
-            echo "Found exact match: $FULL_NAME"
-            echo "REAL_PKG_NAME=$FULL_NAME" >> $GITHUB_ENV
-          elif [ "$COUNT" -gt 1 ]; then
-            echo "ERROR: Multiple matches for '$PKG_NAME':"
-            echo "$FOUND" | xargs -I{} basename {}
-            exit 1
+          # البحث عن الفولدر الحقيقي جوه الـ SDK لإعطاء الاسم لـ make
+          FOUND=$(find sdk/package -maxdepth 5 -name "*${CLEAN_NAME}*" | head -1)
+          
+          if [ -n "$FOUND" ]; then
+            REAL_NAME=$(basename "$FOUND")
+            echo "Found: $REAL_NAME"
+            echo "REAL_PKG_NAME=$REAL_NAME" >> $GITHUB_ENV
           else
-            echo "ERROR: No package matching '$PKG_NAME' found."
+            echo "ERROR: Package '$CLEAN_NAME' not found."
             exit 1
           fi
 
@@ -108,22 +107,26 @@ jobs:
 
       - name: Push Built Packages and Source to Repository
         run: |
-          PKG_NAME="${{ env.REAL_PKG_NAME }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # سحب التعديلات قبل الرفع لضمان عدم وجود Conflict
           git pull --rebase origin main
 
+          # تجهيز فولدر النتائج
           mkdir -p files
           cp -r sdk/bin/. files/
 
+          # إضافة التغييرات
           git add files/
           git add packages-src/
 
+          # التحقق إذا كان هناك جديد لرفعه
           if git diff --cached --quiet; then
             echo "Nothing new to commit"
             exit 0
           fi
 
-          git commit -m "build($PKG_NAME): auto update bin and source $(date '+%Y-%m-%d %H:%M UTC')"
+          git commit -m "build(${{ env.REAL_PKG_NAME }}): update source and bin $(date '+%Y-%m-%d %H:%M UTC')"
           git push origin main
+          
