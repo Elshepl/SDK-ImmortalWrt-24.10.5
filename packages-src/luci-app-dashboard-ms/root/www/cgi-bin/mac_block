@@ -1,0 +1,53 @@
+#!/bin/sh
+echo "Content-Type: text/plain"
+echo ""
+
+# Parse query string
+ACTION=""
+MAC=""
+
+case "$QUERY_STRING" in
+    block=*)
+        ACTION="block"
+        MAC="${QUERY_STRING#block=}"
+        ;;
+    unblock=*)
+        ACTION="unblock"
+        MAC="${QUERY_STRING#unblock=}"
+        ;;
+esac
+
+# Validate MAC address format (prevent command injection)
+validate_mac() {
+    echo "$1" | grep -qiE '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$'
+}
+
+case "$ACTION" in
+    block)
+        if validate_mac "$MAC"; then
+            # Ensure set exists
+            nft list set inet fw4 b_macs >/dev/null 2>&1 || nft add set inet fw4 b_macs '{ type ether_addr; }'
+            # Ensure prerouting rules exist
+            nft list chain inet fw4 prerouting 2>/dev/null | grep -q 'b_macs' || {
+                nft insert rule inet fw4 prerouting ether saddr @b_macs drop
+                nft insert rule inet fw4 prerouting ether saddr @b_macs udp dport '{ 53, 67 }' accept
+            }
+            nft add element inet fw4 b_macs "{ $MAC }"
+            echo "ok"
+        else
+            echo "invalid_mac"
+        fi
+        ;;
+    unblock)
+        if validate_mac "$MAC"; then
+            nft delete element inet fw4 b_macs "{ $MAC }" 2>/dev/null
+            echo "ok"
+        else
+            echo "invalid_mac"
+        fi
+        ;;
+    *)
+        # List blocked MACs
+        nft list set inet fw4 b_macs 2>/dev/null || echo ""
+        ;;
+esac

@@ -1,0 +1,52 @@
+#!/bin/sh
+echo "Content-Type: text/plain"
+echo ""
+
+CACHE_FILE="/tmp/realip_cache"
+LOCK_FILE="/tmp/realip_lock"
+CACHE_TTL=5
+LOCK_MAX_AGE=10
+
+current_time=$(date +%s)
+
+# Return cache if valid
+if [ -f "$CACHE_FILE" ]; then
+    cache_time=$(date -r "$CACHE_FILE" +%s 2>/dev/null)
+    [ -z "$cache_time" ] && cache_time=0
+    diff=$((current_time - cache_time))
+    if [ "$diff" -lt "$CACHE_TTL" ]; then
+        cat "$CACHE_FILE"
+        exit 0
+    fi
+fi
+
+# Clean stale lock (older than 10 seconds = something crashed)
+if [ -d "$LOCK_FILE" ]; then
+    lock_time=$(date -r "$LOCK_FILE" +%s 2>/dev/null)
+    [ -z "$lock_time" ] && lock_time=0
+    lock_age=$((current_time - lock_time))
+    if [ "$lock_age" -gt "$LOCK_MAX_AGE" ]; then
+        rmdir "$LOCK_FILE" 2>/dev/null
+    fi
+fi
+
+# Try acquiring lock using mkdir (atomic operation)
+if mkdir "$LOCK_FILE" 2>/dev/null; then
+    # Fetch IP + Country from Cloudflare trace (single request)
+    trace=$(curl -s -4 --max-time 2 https://1.1.1.1/cdn-cgi/trace)
+
+    ip=$(echo "$trace" | grep -E '^ip=' | cut -d= -f2)
+    loc=$(echo "$trace" | grep -E '^loc=' | cut -d= -f2)
+
+    if [ -n "$ip" ]; then
+        echo "${ip}|${loc}" > "$CACHE_FILE"
+        echo "${ip}|${loc}"
+    else
+        [ -f "$CACHE_FILE" ] && cat "$CACHE_FILE" || echo "-"
+    fi
+
+    rmdir "$LOCK_FILE" 2>/dev/null
+else
+    # Lock held by another process, return old cache instantly
+    [ -f "$CACHE_FILE" ] && cat "$CACHE_FILE" || echo "-"
+fi

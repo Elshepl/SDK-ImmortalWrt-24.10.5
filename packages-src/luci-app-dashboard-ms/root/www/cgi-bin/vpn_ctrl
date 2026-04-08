@@ -1,0 +1,26 @@
+#!/bin/sh
+echo "Content-Type: text/plain"
+echo ""
+
+ACTION=$QUERY_STRING
+
+case "$ACTION" in
+    start)
+        /etc/init.d/homeproxy enable >/dev/null 2>&1
+        /etc/init.d/homeproxy start >/dev/null 2>&1
+        echo "running"
+        ;;
+    stop)
+        /etc/init.d/homeproxy stop >/dev/null 2>&1
+        /etc/init.d/homeproxy disable >/dev/null 2>&1
+        echo "stopped"
+        ;;
+    *)
+        if /etc/init.d/homeproxy status 2>/dev/null | grep -q "running"; then
+            echo "running"
+        else
+            echo "stopped"
+        fi
+        ;;
+esac
+

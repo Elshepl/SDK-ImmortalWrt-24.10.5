@@ -1,0 +1,33 @@
+#!/bin/sh
+echo "Status: 200 OK"
+echo "Content-Type: application/json"
+echo "Cache-Control: no-cache, no-store, must-revalidate"
+echo ""
+
+cpu_stat=$(head -n 1 /proc/stat)
+rom_perc=$(df -k / | awk 'NR==2 {print $5}' | tr -d '%')
+rom_avail=$(df -k /overlay 2>/dev/null | awk 'NR==2 {print $4}')
+[ -z "$rom_avail" ] && rom_avail=$(df -k / | awk 'NR==2 {print $4}')
+rom_total=$(df -k /overlay 2>/dev/null | awk 'NR==2 {print $2}')
+[ -z "$rom_total" ] && rom_total=$(df -k / | awk 'NR==2 {print $2}')
+mem_total=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+mem_avail=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+[ -z "$mem_avail" ] && mem_avail=$(awk '/MemFree|Buffers|Cached/ {sum+=$2} END {print sum}' /proc/meminfo)
+
+cpu_temp_raw=$(cat /sys/class/hwmon/hwmon*/temp*_input 2>/dev/null | head -n1 | tr -d '\r\n ')
+cpu_temp=""
+if [ -n "$cpu_temp_raw" ] && [ "$cpu_temp_raw" -eq "$cpu_temp_raw" ] 2>/dev/null; then
+  cpu_temp=$((cpu_temp_raw / 1000))
+fi
+
+cat <<EOF
+{
+  "cpu": "$cpu_stat",
+  "cpu_temp": "$cpu_temp",
+  "rom_perc": "$rom_perc",
+  "rom_avail": "$rom_avail",
+  "rom_total": "$rom_total",
+  "mem_total": "$mem_total",
+  "mem_avail": "$mem_avail"
+}
+EOF

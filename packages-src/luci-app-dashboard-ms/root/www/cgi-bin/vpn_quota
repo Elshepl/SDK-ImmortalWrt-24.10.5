@@ -1,0 +1,56 @@
+#!/bin/sh
+echo "Content-Type: text/plain"
+echo ""
+
+CACHE_FILE="/tmp/vpn_quota_cache.txt"
+TMP_FILE="/tmp/vpn_quota_tmp.txt"
+LOCK_FILE="/tmp/vpn_quota.lock"
+CACHE_TTL=60
+
+# 1. لو ملف الكاش موجود، شوف عمره
+if [ -f "$CACHE_FILE" ]; then
+    FILE_AGE=$(($(date +%s) - $(date -r "$CACHE_FILE" +%s)))
+    if [ "$FILE_AGE" -lt "$CACHE_TTL" ]; then
+        cat "$CACHE_FILE"
+        exit 0
+    fi
+fi
+
+# 2. حماية الـ Overload والتنظيف الذاتي
+if [ -f "$LOCK_FILE" ]; then
+    LOCK_AGE=$(($(date +%s) - $(date -r "$LOCK_FILE" +%s)))
+    if [ "$LOCK_AGE" -gt 15 ]; then
+        rm -f "$LOCK_FILE"
+    else
+        [ -f "$CACHE_FILE" ] && cat "$CACHE_FILE"
+        exit 0
+    fi
+fi
+
+# 3. جلب الداتا الجديدة
+SUB_URL=$(uci -q get homeproxy.subscription.subscription_url || uci -q get homeproxy.@subscription[0].subscription_url)
+
+if [ -n "$SUB_URL" ]; then
+    touch "$LOCK_FILE"
+    
+    # تفريغ الداتا في ملف مؤقت الأول (فكرتك العبقرية)
+    curl -s -k -L -D - -o /dev/null -m 5 "$SUB_URL" > "$TMP_FILE"
+    
+    # فحص الملف المؤقت: هل يحتوي على داتا حقيقية؟ (بندور على كلمة profile أو subscription)
+    if grep -qiE "subscription-userinfo|profile-" "$TMP_FILE"; then
+        # الداتا سليمة! ننقلها للملف الأساسي (عملية استبدال آمنة)
+        mv "$TMP_FILE" "$CACHE_FILE"
+    else
+        # الداتا فاسدة أو النت فاصل
+        rm -f "$TMP_FILE"
+        
+        # حركة صياعة: نحدث وقت الملف القديم عشان ندي السيرفر فرصة 60 ثانية يفوق
+        # بدل ما الراوتر يفضل يعمل curl كل 3 ثواني ويخنق نفسه
+        [ -f "$CACHE_FILE" ] && touch "$CACHE_FILE"
+    fi
+    
+    rm -f "$LOCK_FILE"
+    
+    # نطبع آخر داتا سليمة موجودة
+    [ -f "$CACHE_FILE" ] && cat "$CACHE_FILE"
+fi
