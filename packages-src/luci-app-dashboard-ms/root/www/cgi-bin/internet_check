@@ -1,0 +1,43 @@
+#!/bin/sh
+echo "Content-Type: text/plain"
+echo ""
+
+CACHE_FILE="/tmp/internet_check_cache.txt"
+LOCK_FILE="/tmp/internet_check.lock"
+CACHE_TTL=10
+
+# 1. الكاش: لو موجود وعمره أقل من 10 ثواني، اقرأه فوراً ولا تعمل أي شيء
+if [ -f "$CACHE_FILE" ]; then
+    FILE_AGE=$(($(date +%s) - $(date -r "$CACHE_FILE" +%s)))
+    if [ "$FILE_AGE" -lt "$CACHE_TTL" ]; then
+        cat "$CACHE_FILE"
+        exit 0
+    fi
+fi
+
+# 2. القفل: لو في عملية curl شغالة حالياً، لا تفتح واحدة تانية أبداً
+if [ -f "$LOCK_FILE" ]; then
+    LOCK_AGE=$(($(date +%s) - $(date -r "$LOCK_FILE" +%s)))
+    if [ "$LOCK_AGE" -gt 5 ]; then
+        rm -f "$LOCK_FILE"
+    else
+        [ -f "$CACHE_FILE" ] && cat "$CACHE_FILE" || echo "false"
+        exit 0
+    fi
+fi
+
+# 3. الاختبار الفعلي (مع حماية القفل)
+touch "$LOCK_FILE"
+
+if curl -s --connect-timeout 2 -m 3 -o /dev/null -w "%{http_code}" "http://cp.cloudflare.com/generate_204" 2>/dev/null | grep -q "204"; then
+    echo "true" > "$CACHE_FILE"
+elif ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+    echo "true" > "$CACHE_FILE"
+else
+    echo "false" > "$CACHE_FILE"
+    # حركة الصياعة: لو النت فاصل، نام 10 ثواني إضافية بدل ما تفضل تضرب curl
+    touch "$CACHE_FILE"
+fi
+
+rm -f "$LOCK_FILE"
+cat "$CACHE_FILE"
